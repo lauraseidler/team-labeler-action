@@ -114,14 +114,37 @@ export async function addLabels(
   })
 }
 
-export async function getUserTeams(client: GitHub | null): Promise<string[]> {
+export async function getUserTeams(
+  client: GitHub | null,
+  author: string
+): Promise<string[]> {
   if (!client) {
     return []
   }
 
   try {
-    const response = await client.rest.teams.listForAuthenticatedUser()
-    return response.data.map(team => `@${team.organization.login}/${team.slug}`)
+    // Get all teams in the org of the current repo
+    const response = await client.rest.teams.list({
+      org: github.context.repo.owner
+    })
+
+    // For each team, check the membership of the user that opened the PR
+    const memberships = await Promise.all(
+      response.data.map(team =>
+        client.rest.teams.getMembershipForUserInOrg({
+          org: github.context.repo.owner,
+          team_slug: team.slug,
+          username: author
+        })
+      )
+    )
+
+    // Filter the teams that the user is a member of
+    const userTeams = response.data.filter((_, index) =>
+      memberships[index].data.state === 'active'
+    )
+
+    return userTeams.map(team => `@${github.context.repo.owner}/${team.slug}`)
   } catch (_error) {
     core.warning(
       'Failed to fetch user teams. Ensure the org-token has the necessary permissions.'
